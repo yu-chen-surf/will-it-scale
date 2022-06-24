@@ -48,12 +48,22 @@ class linux_stat():
 		return 1.0 * idle / (idle + busy)
 
 
-duration=5
-
-if len(sys.argv) != 2:
-	print('Usage: runtest.py <testcase>', file=sys.stderr)
+if len(sys.argv) < 6:
+	print('Usage: runtest.py <testcase> <duration> <mode> <no_affinity> <smt> <threads...>', file=sys.stderr)
 	sys.exit(1)
 cmd = sys.argv[1]
+duration = int(sys.argv[2])
+mode = sys.argv[3]
+
+affinity = "  "
+if int(sys.argv[4]) == 1:
+	affinity = " -n "
+
+smt = "  "
+if int(sys.argv[5]) == 1:
+	smt = " -m "
+
+threads = sys.argv[6:]
 
 nr_cores=0
 r = re.compile('^processor')
@@ -87,43 +97,42 @@ if arch == 'ppc64':
 print('tasks,processes,processes_idle,threads,threads_idle,linear')
 print('0,0,100,0,100,0')
 
-step = 1
-# if step=5, this is: [5, 10, 15, ... nr_cores]
-data_points = list(range(step, nr_cores+step, step))
-# this makes it [ 1, 5, 10, ... ]
-if step > 1:
-	data_points.insert(0, 1)
+linear = 0
+for i in threads:
+	i = int(i)
+	processes_avg = 0
+	processes_idle = 0
+	if mode == 'process' or mode == 'both':
+		c = './%s_processes -t %d -s %d %s %s ' % (cmd, i, duration, affinity, smt)
+		before = linux_stat()
+		pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
+		for line in pipe.readlines():
+			if 'testcase:' in line:
+				(testcase, val) = line.split(':')
+				title = open(cmd + '.title', 'w')
+				title.write(val)
+				title.close()
 
-for i in data_points:
-	c = './%s_processes -t %d -s %d' % (cmd, i, duration)
-	before = linux_stat()
-	pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
-	processes_avg = -1
-	for line in pipe.readlines():
-		if 'testcase:' in line:
-			(testcase, val) = line.split(':')
-			title = open(cmd + '.title', 'w')
-			title.write(val)	
-			title.close() 
-			
-		if 'average:' in line:
-			(name, val) = line.split(':')
-			processes_avg = int(val)
-	pipe.close()
-	after = linux_stat()
-	processes_idle = after.idle_fraction(before) * 100
+			if 'average:' in line:
+				(name, val) = line.split(':')
+				processes_avg = int(val)
+		pipe.close()
+		after = linux_stat()
+		processes_idle = after.idle_fraction(before) * 100
 
-	c = './%s_threads -t %d -s %d' % (cmd, i, duration)
-	before = linux_stat()
-	pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
-	threads_avg = -1
-	for line in pipe.readlines():
-		if 'average:' in line:
-			(name, val) = line.split(':')
-			threads_avg = int(val)
-	pipe.close()
-	after = linux_stat()
-	threads_idle = after.idle_fraction(before) * 100
+	threads_avg = 0
+	threads_idle = 0
+	if mode == 'thread' or mode == 'both':
+		c = './%s_threads -t %d -s %d %s %s ' % (cmd, i, duration, affinity, smt)
+		before = linux_stat()
+		pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
+		for line in pipe.readlines():
+			if 'average:' in line:
+				(name, val) = line.split(':')
+				threads_avg = int(val)
+		pipe.close()
+		after = linux_stat()
+		threads_idle = after.idle_fraction(before) * 100
 
 	if i == 1:
 		linear = max(processes_avg, threads_avg)
